@@ -31,7 +31,7 @@ pub struct IpPacket {
     protocol: u8,
     source_address: Ipv4Addr,
     destination_address: Ipv4Addr,
-    data: Bytes,
+    pub data: Bytes,
 }
 
 // Per RFC 791, "minimum value for a correct header is 5", in 32 bit words,

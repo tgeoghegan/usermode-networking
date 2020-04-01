@@ -120,8 +120,10 @@ around this in userspace (see the comments in `IpPacket::from_bytes`).
 <a name="sockraw">1</a>: [Spec on OpenGroup][opengroup]. You can also get some documentation from
 `ip(4)` on BSD and derivatives, or `ip(7)`, `raw(7)` and `packet(7)` on Linux (see also Linux's
 `AF_PACKET` sockets, which provide even more robust support for this sort of thing).
+
 <a name="striphdr">2</a>: Note that IP headers can be omitted on reads if `INP_STRIPHDR` is set via
 setsockopt(2); similarly senders need not provide IP headers unless `INP_HDRINCL` is set.
+
 <a name="bind">3</a>: The port number provided to `bind(2)` in the `sockaddr` structure will simply
 be ignored, since ports are meaningless at the IP layer.
 

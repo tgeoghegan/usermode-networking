@@ -117,6 +117,10 @@ because all the other multi-byte fields in the packet are not flipped. The good 
 problem is deterministic and there isn't really any loss of information, so we can easily work
 around this in userspace (see the comments in `IpPacket::from_bytes`).
 
+I've reported the problem with the incorrect length and fragment offset fields to Apple
+[via Feedback Assistant](https://feedbackassistant.apple.com/feedback/7647117). That said, I don't
+know how they could fix this without breaking existing users of `SOCK_RAW`.
+
 <a name="sockraw">1</a>: [Spec on OpenGroup][opengroup]. You can also get some documentation from
 `ip(4)` on BSD and derivatives, or `ip(7)`, `raw(7)` and `packet(7)` on Linux (see also Linux's
 `AF_PACKET` sockets, which provide even more robust support for this sort of thing).

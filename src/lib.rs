@@ -1,8 +1,8 @@
 use libc::{c_int, socket, socklen_t, IPPROTO_IP, PF_INET, SOCK_RAW};
 use nix::sys::socket::{InetAddr, IpAddr, Ipv4Addr, SockAddr};
 use std::io::{Error, ErrorKind, Result};
-use std::net::{AddrParseError};
 use std::mem::size_of;
+use std::net::AddrParseError;
 
 pub mod ip;
 pub mod udp;
@@ -35,14 +35,17 @@ pub fn create_raw_socket(protocol: SockProtocol) -> Result<c_int> {
         // libc::SetSockOptanyway, we can just do that directly here. Crate libc doesn't expose the
         // macOS-specific IP_STRIPHDR, so we provide its value from /usr/include/netinet/in.h.
         let val: c_int = 1;
-        let res = libc::setsockopt(sock, IPPROTO_IP, 23,
-            &val as *const c_int as *const libc::c_void, size_of::<c_int>() as socklen_t);
+        let res = libc::setsockopt(
+            sock,
+            IPPROTO_IP,
+            23,
+            &val as *const c_int as *const libc::c_void,
+            size_of::<c_int>() as socklen_t,
+        );
         if res != 0 {
             return Err(Error::last_os_error());
         }
     }
-
-
 
     Ok(sock)
 }
@@ -55,17 +58,25 @@ pub fn sockaddr_from_str(s: &str) -> std::result::Result<SockAddr, AddrParseErro
     Ok(SockAddr::new_inet(InetAddr::from_std(&s.parse()?)))
 }
 
-
 // Decompose a SockAddr into an Ipv4Addr and a port number, if the SockAddr is a Inet IPv4 address
 // and raise an error otherwise. This is probably a bit too clever.
-pub fn ipv4_and_port_from_sockaddr(sockaddr: SockAddr) -> Result<(u16, Ipv4Addr)> {
+pub fn ipv4_and_port_from_sockaddr(sockaddr: &SockAddr) -> Result<(u16, Ipv4Addr)> {
     Ok(if let SockAddr::Inet(inetaddr) = sockaddr {
-        (inetaddr.port(), if let IpAddr::V4(ipv4addr) = inetaddr.ip() {
-            ipv4addr
-        } else {
-            return Err(Error::new(ErrorKind::InvalidInput, format!("IP address {} is not v4", sockaddr)));
-        })
+        (
+            inetaddr.port(),
+            if let IpAddr::V4(ipv4addr) = inetaddr.ip() {
+                ipv4addr
+            } else {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("IP address {} is not v4", sockaddr),
+                ));
+            },
+        )
     } else {
-        return Err(Error::new(ErrorKind::InvalidInput, format!("address {} is not an Inet address", sockaddr)));
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            format!("address {} is not an Inet address", sockaddr),
+        ));
     })
 }

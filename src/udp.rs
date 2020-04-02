@@ -1,8 +1,7 @@
-use pretty_hex::pretty_hex;
 use byteorder::{ByteOrder, NativeEndian, NetworkEndian, ReadBytesExt, WriteBytesExt};
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use internet_checksum::Checksum;
-use nix::sys::socket::{bind, recvfrom, InetAddr, IpAddr, Ipv4Addr, sendto, MsgFlags, SockAddr};
+use nix::sys::socket::{bind, recvfrom, sendto, InetAddr, IpAddr, Ipv4Addr, MsgFlags, SockAddr};
 use nix::unistd::close;
 use std::fmt;
 use std::io::{Cursor, Error, ErrorKind, Result};
@@ -22,19 +21,24 @@ impl UdpSocket {
     pub fn bind(addr: &str) -> Result<UdpSocket> {
         let sock = create_raw_socket(SockProtocol::Udp)?;
         let sockaddr = match sockaddr_from_str(addr) {
-            Ok(s) => { s }
-            Err(err) => { return Err(Error::new(ErrorKind::InvalidInput, err)); }
+            Ok(s) => s,
+            Err(err) => {
+                return Err(Error::new(ErrorKind::InvalidInput, err));
+            }
         };
 
         // The port does nothing in the bind(2) call, but we need it at our level to appropriately
         // filter packets.
-        let (bound_port, bound_address) = ipv4_and_port_from_sockaddr(sockaddr)?;
+        let (bound_port, bound_address) = ipv4_and_port_from_sockaddr(&sockaddr)?;
 
         if let Err(err) = bind(sock, &sockaddr) {
-            return Err(Error::new(ErrorKind::Other, format!("failed to bind(2) to {}: {}", addr, err)));
+            return Err(Error::new(
+                ErrorKind::Other,
+                format!("failed to bind(2) to {}: {}", addr, err),
+            ));
         }
 
-        Ok(UdpSocket{
+        Ok(UdpSocket {
             bound_address,
             bound_port,
             socket: sock,
@@ -51,17 +55,25 @@ impl UdpSocket {
             // can figure out how big the whole message is.
             let sender_addr = match recvfrom(self.socket, packet_buf.as_mut()) {
                 Ok((count, _)) if count < packet_buf.len() => {
-                    return Err(Error::new(ErrorKind::UnexpectedEof, "short read while fetching header"));
+                    return Err(Error::new(
+                        ErrorKind::UnexpectedEof,
+                        "short read while fetching header",
+                    ));
                 }
                 Ok((_, None)) => {
-                    return Err(Error::new(ErrorKind::InvalidData, "no sender address found"));
+                    return Err(Error::new(
+                        ErrorKind::InvalidData,
+                        "no sender address found",
+                    ));
                 }
-                Ok((_, Some(sender_addr))) => { sender_addr }
-                Err(err) => { return Err(Error::new(ErrorKind::Other, err)); }
+                Ok((_, Some(sender_addr))) => sender_addr,
+                Err(err) => {
+                    return Err(Error::new(ErrorKind::Other, err));
+                }
             };
 
             // The IP protocol level sockaddr won't have a meaningful port, so drop that value
-            let (_, sender_ipv4_addr) = ipv4_and_port_from_sockaddr(sender_addr)?;
+            let (_, sender_ipv4_addr) = ipv4_and_port_from_sockaddr(&sender_addr)?;
 
             let udp_header = UdpPacket::from_bytes(&packet_buf)?;
 
@@ -76,7 +88,10 @@ impl UdpSocket {
                     // XXX client will want to try again with a bigger buffer, but we have already
                     // moved the stream past the header, so subsequent reads will fail, unless we
                     // somehow hold on to the header to reuse in next recv_from call.
-                    return Err(Error::new(ErrorKind::InvalidInput, "message too big for buffer"));
+                    return Err(Error::new(
+                        ErrorKind::InvalidInput,
+                        "message too big for buffer",
+                    ));
                 }
             }
 
@@ -86,7 +101,7 @@ impl UdpSocket {
             while to_read > 0 {
                 let mut slice = buf.split_off(udp_header.data_length() - to_read);
                 to_read -= match recvfrom(self.socket, slice.as_mut()) {
-                    Ok((count, _)) => { count }
+                    Ok((count, _)) => count,
                     Err(err) => {
                         return Err(Error::new(ErrorKind::Other, err));
                     }
@@ -99,6 +114,57 @@ impl UdpSocket {
                 break Ok(udp_header.data_length());
             }
         }
+    }
+
+    pub fn send_to(&self, buf: &mut BytesMut, dest: &SockAddr) -> Result<usize> {
+        let packet_len = buf.len() + UDP_HEADER_LENGTH;
+        if packet_len > std::u16::MAX as usize {
+            return Err(Error::new(ErrorKind::InvalidInput, "message too long"));
+        }
+
+        let (dest_port, dest_address) = ipv4_and_port_from_sockaddr(dest)?;
+        let mut header = UdpPacket {
+            source: self.bound_port,
+            destination: dest_port,
+            length: packet_len as u16,
+            checksum: 0,
+        };
+
+        header.fill_checksum(self.bound_address, dest_address, buf.as_ref());
+
+        let mut header_buf = BytesMut::with_capacity(UDP_HEADER_LENGTH);
+        header_buf.resize(header_buf.capacity(), 0);
+        header.into_bytes(&mut header_buf)?;
+
+        match sendto(self.socket, header_buf.as_ref(), dest, MsgFlags::empty()) {
+            Ok(count) if count < header_buf.len() => {
+                return Err(Error::new(
+                    ErrorKind::Other,
+                    "short write when writing header",
+                ));
+            }
+            Err(err) => {
+                return Err(Error::new(
+                    ErrorKind::Other,
+                    format!("failed to write to socket: {}", err),
+                ));
+            }
+            Ok(_) => (),
+        }
+
+        let mut to_write = buf.len();
+
+        while to_write > 0 {
+            let slice = buf.split_off(buf.len() - to_write);
+            to_write -= match sendto(self.socket, slice.as_ref(), dest, MsgFlags::empty()) {
+                Ok(count) => count,
+                Err(err) => {
+                    return Err(Error::new(ErrorKind::Other, err));
+                }
+            };
+            buf.unsplit(slice);
+        }
+        Ok(buf.len())
     }
 }
 
@@ -136,10 +202,16 @@ impl UdpPacket {
     // (https://github.com/tokio-rs/bytes/issues/350)
     pub fn from_bytes(bytes: &BytesMut) -> Result<UdpPacket> {
         if bytes.len() < UDP_HEADER_LENGTH {
-            return Err(Error::new(ErrorKind::InvalidInput, "packet is not long enough"));
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "packet is not long enough",
+            ));
         }
         if bytes.len() > std::u16::MAX as usize {
-            return Err(Error::new(ErrorKind::InvalidInput, "buffer is too big for legal UDP packet"));
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "buffer is too big for legal UDP packet",
+            ));
         }
 
         // We use a std::io::Cursor to provide std::io::Read on our buf, which is required for the
@@ -164,7 +236,10 @@ impl UdpPacket {
 
     pub fn into_bytes(&self, buf: &mut BytesMut) -> Result<()> {
         if buf.capacity() < UDP_HEADER_LENGTH {
-            return Err(Error::new(ErrorKind::InvalidInput, "provided buffer is not long enough"));
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "provided buffer is not long enough",
+            ));
         }
         buf.resize(UDP_HEADER_LENGTH, 0);
 
@@ -181,11 +256,19 @@ impl UdpPacket {
         Ok(())
     }
 
-    pub fn verify_checksum(&self, source_address: Ipv4Addr, dest_address: Ipv4Addr, data: &[u8]) -> Result<()> {
+    pub fn verify_checksum(
+        &self,
+        source_address: Ipv4Addr,
+        dest_address: Ipv4Addr,
+        data: &[u8],
+    ) -> Result<()> {
         if self.checksum == self.compute_checksum(source_address, dest_address, data) {
             Ok(())
         } else {
-            Err(Error::new(ErrorKind::InvalidInput, format!("incorrect UDP checksum {}", self.checksum)))
+            Err(Error::new(
+                ErrorKind::InvalidInput,
+                format!("incorrect UDP checksum {}", self.checksum),
+            ))
         }
     }
 
@@ -193,7 +276,12 @@ impl UdpPacket {
         self.checksum = self.compute_checksum(source_address, dest_address, data);
     }
 
-    pub fn compute_checksum(&self, source_address: Ipv4Addr, dest_address: Ipv4Addr, data: &[u8]) -> u16 {
+    pub fn compute_checksum(
+        &self,
+        source_address: Ipv4Addr,
+        dest_address: Ipv4Addr,
+        data: &[u8],
+    ) -> u16 {
         let mut c = Checksum::new();
         // Feed in pseudo-header: source address (4 bytes), dest address (4 bytes), one zero byte,
         // protocol number (1 byte), UDP packet length (2 bytes)
@@ -211,8 +299,11 @@ impl UdpPacket {
 
 impl fmt::Display for UdpPacket {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Source port: {}\nDestination port: {}\nLength: {}\nChecksum: {}",
-            self.source, self.destination, self.length, self.checksum)
+        write!(
+            f,
+            "Source port: {}\nDestination port: {}\nLength: {}\nChecksum: {}",
+            self.source, self.destination, self.length, self.checksum
+        )
     }
 }
 

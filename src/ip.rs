@@ -41,7 +41,10 @@ pub const MINIMUM_IP_PACKET_LEN: usize = 20;
 impl IpPacket {
     pub fn from_bytes(bytes: &Bytes) -> Result<IpPacket> {
         if bytes.len() < MINIMUM_IP_PACKET_LEN {
-            return Err(Error::new(ErrorKind::InvalidInput, "packet is not long enough"));
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "packet is not long enough",
+            ));
         }
 
         let mut cursor = Cursor::new(bytes);
@@ -49,12 +52,18 @@ impl IpPacket {
         let version_and_ihl = cursor.read_u8().unwrap();
         let version = (version_and_ihl & 0xf0) >> 4;
         if version != 4 {
-            return Err(Error::new(ErrorKind::Other, "unsupported IP protocol version"));
+            return Err(Error::new(
+                ErrorKind::Other,
+                "unsupported IP protocol version",
+            ));
         }
 
         let internet_header_len = version_and_ihl & 0x0f;
         if internet_header_len != 5 {
-            return Err(Error::new(ErrorKind::Other, "IPv4 packet contains unsupported options"));
+            return Err(Error::new(
+                ErrorKind::Other,
+                "IPv4 packet contains unsupported options",
+            ));
         }
 
         let data_start = internet_header_len as u16 * 4;
@@ -94,14 +103,22 @@ impl IpPacket {
 
 impl fmt::Display for IpPacket {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Version {}
+        write!(
+            f,
+            "Version {}
 Header length: {}
 total length: {}
 protocol: {}
 source address: {}
 destination address {}
-Packet contents: {}", 
-            self.version, self.internet_header_length * 4, self.total_length, self.protocol,
-            self.source_address, self.destination_address, pretty_hex(&self.data))
+Packet contents: {}",
+            self.version,
+            self.internet_header_length * 4,
+            self.total_length,
+            self.protocol,
+            self.source_address,
+            self.destination_address,
+            pretty_hex(&self.data)
+        )
     }
 }

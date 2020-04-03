@@ -1,13 +1,13 @@
 use byteorder::{ByteOrder, NativeEndian, NetworkEndian, ReadBytesExt, WriteBytesExt};
 use bytes::BytesMut;
 use internet_checksum::Checksum;
-use nix::sys::socket::{bind, recvfrom, sendto, InetAddr, IpAddr, Ipv4Addr, MsgFlags, SockAddr};
+use nix::sys::socket::{bind, sendto, InetAddr, IpAddr, Ipv4Addr, MsgFlags, SockAddr};
 use nix::unistd::close;
 use std::fmt;
 use std::io::{Cursor, Error, ErrorKind, Result};
 use std::os::unix::io::RawFd;
 
-use crate::{create_raw_socket, ipv4_and_port_from_sockaddr, sockaddr_from_str, SockProtocol};
+use crate::{create_raw_socket, ipv4_and_port_from_sockaddr, recvfrom, sockaddr_from_str, SockProtocol};
 
 const UDP_HEADER_LENGTH: usize = 8;
 
@@ -53,7 +53,7 @@ impl UdpSocket {
             // The kernel will only send us IP packets that match our protocol, and we assume it
             // will handle reassembling IP packets for us. Read in the fixed-length UDP header so we
             // can figure out how big the whole message is.
-            let sender_addr = match recvfrom(self.socket, packet_buf.as_mut()) {
+            let sender_addr = match recvfrom(self.socket, packet_buf.as_mut(), MsgFlags::MSG_PEEK) {
                 Ok((count, _)) if count < packet_buf.len() => {
                     return Err(Error::new(
                         ErrorKind::UnexpectedEof,
@@ -95,12 +95,25 @@ impl UdpSocket {
                 }
             }
 
-            // Kinda sketchy: we want to skip this UDP packet, but to do that we have to read bytes
-            // from the socket and put them *somewhere*. So we will use the caller provided buffer,
-            // possibly more than once if the packet being skipped is bigger than that buffer!
+            // At this point, either the packet is for our socket and we have enough space in the
+            // caller's buffer, or we want to skip the packet entirely. Either way, now we need to
+            // read in the header for real.
+            match recvfrom(self.socket, packet_buf.as_mut(), MsgFlags::empty()) {
+                Ok((count, _)) if count < packet_buf.len() => {
+                    return Err(Error::new(
+                        ErrorKind::UnexpectedEof,
+                        "short read while fetching header",
+                    ));
+                }
+                Ok((_, _)) => (),
+                Err(err) => {
+                    return Err(Error::new(ErrorKind::Other, err));
+                }
+            }
+
             while to_read > 0 {
                 let mut slice = buf.split_off(udp_header.data_length() - to_read);
-                to_read -= match recvfrom(self.socket, slice.as_mut()) {
+                to_read -= match recvfrom(self.socket, slice.as_mut(), MsgFlags::empty()) {
                     Ok((count, _)) => count,
                     Err(err) => {
                         return Err(Error::new(ErrorKind::Other, err));

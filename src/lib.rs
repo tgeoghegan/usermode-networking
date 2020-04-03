@@ -1,8 +1,12 @@
-use libc::{c_int, socket, socklen_t, IPPROTO_IP, PF_INET, SOCK_RAW};
-use nix::sys::socket::{InetAddr, IpAddr, Ipv4Addr, SockAddr};
+use libc;
+use libc::{c_int, c_void, size_t, sockaddr, sockaddr_storage, socket, socklen_t, IPPROTO_IP, PF_INET, SOCK_RAW};
+use nix::errno::Errno;
+use nix::sys::socket::{sockaddr_storage_to_addr, InetAddr, IpAddr, Ipv4Addr, MsgFlags, SockAddr};
+use nix::{Error as NixError, Result as NixResult};
 use std::io::{Error, ErrorKind, Result};
-use std::mem::size_of;
+use std::mem;
 use std::net::AddrParseError;
+use std::os::unix::io::RawFd;
 
 pub mod ip;
 pub mod udp;
@@ -39,8 +43,8 @@ pub fn create_raw_socket(protocol: SockProtocol) -> Result<c_int> {
             sock,
             IPPROTO_IP,
             23,
-            &val as *const c_int as *const libc::c_void,
-            size_of::<c_int>() as socklen_t,
+            &val as *const c_int as *const c_void,
+            mem::size_of::<c_int>() as socklen_t,
         );
         if res != 0 {
             return Err(Error::last_os_error());
@@ -79,4 +83,32 @@ pub fn ipv4_and_port_from_sockaddr(sockaddr: &SockAddr) -> Result<(u16, Ipv4Addr
             format!("address {} is not an Inet address", sockaddr),
         ));
     })
+}
+
+// Cribbed from nix, but with an extra MsgFlags argument they are missing
+// https://github.com/nix-rust/nix/issues/1203
+pub fn recvfrom(
+    sockfd: RawFd,
+    buf: &mut [u8],
+    flags: MsgFlags,
+) -> NixResult<(usize, Option<SockAddr>)> {
+    unsafe {
+        let mut addr: sockaddr_storage = mem::zeroed();
+        let mut len = mem::size_of::<sockaddr_storage>() as socklen_t;
+
+        let ret = Errno::result(libc::recvfrom(
+            sockfd,
+            buf.as_ptr() as *mut c_void,
+            buf.len() as size_t,
+            flags.bits(),
+            &mut addr as *mut sockaddr_storage as *mut sockaddr,
+            &mut len as *mut socklen_t,
+        ))? as usize;
+
+        match sockaddr_storage_to_addr(&addr, len as usize) {
+            Err(NixError::Sys(Errno::ENOTCONN)) => Ok((ret, None)),
+            Ok(addr) => Ok((ret, Some(addr))),
+            Err(e) => Err(e),
+        }
+    }
 }

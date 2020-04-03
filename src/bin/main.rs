@@ -20,13 +20,23 @@ fn main() {
         println!("Server listening for messages...");
         loop {
             let mut buf = BytesMut::new();
-            buf.resize(128, 0);
+            buf.resize(8, 0);
             match server_sock.recv_from(&mut buf) {
                 Ok(count) => {
                     println!("read {} bytes from socket\n{}", count, pretty_hex(&buf));
                 }
                 Err(err) => {
                     println!("failed to read from socket: {}", err);
+                    buf.resize(128, 0);
+                    match server_sock.recv_from(&mut buf) {
+                        Ok(count) => {
+                            println!("read {} bytes from socket\n{}", count, pretty_hex(&buf));
+                        }
+                        Err(err) => {
+                            println!("failed to read from socket: {}", err);
+                        }
+                    }
+
                     process::exit(1);
                 }
             }

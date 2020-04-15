@@ -1,5 +1,8 @@
 use libc;
-use libc::{c_int, c_void, size_t, sockaddr, sockaddr_storage, socket, socklen_t, IPPROTO_IP, PF_INET, SOCK_RAW};
+use libc::{
+    c_int, c_void, size_t, sockaddr, sockaddr_storage, socket, socklen_t, IPPROTO_IP, PF_INET,
+    SOCK_RAW,
+};
 use nix::errno::Errno;
 use nix::sys::socket::{sockaddr_storage_to_addr, InetAddr, IpAddr, Ipv4Addr, MsgFlags, SockAddr};
 use nix::{Error as NixError, Result as NixResult};

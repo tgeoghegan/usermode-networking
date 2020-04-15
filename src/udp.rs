@@ -1,13 +1,15 @@
 use byteorder::{ByteOrder, NativeEndian, NetworkEndian, ReadBytesExt, WriteBytesExt};
 use bytes::BytesMut;
 use internet_checksum::Checksum;
-use nix::sys::socket::{bind, sendto, InetAddr, IpAddr, Ipv4Addr, MsgFlags, SockAddr};
+use nix::sys::socket::{bind, sendto, Ipv4Addr, MsgFlags, SockAddr};
 use nix::unistd::close;
 use std::fmt;
 use std::io::{Cursor, Error, ErrorKind, Result};
 use std::os::unix::io::RawFd;
 
-use crate::{create_raw_socket, ipv4_and_port_from_sockaddr, recvfrom, sockaddr_from_str, SockProtocol};
+use crate::{
+    create_raw_socket, ipv4_and_port_from_sockaddr, recvfrom, sockaddr_from_str, SockProtocol,
+};
 
 const UDP_HEADER_LENGTH: usize = 8;
 
@@ -85,9 +87,6 @@ impl UdpSocket {
             // all the packets anyway.
             if udp_header.destination == self.bound_port {
                 if to_read > buf.len() {
-                    // XXX client will want to try again with a bigger buffer, but we have already
-                    // moved the stream past the header, so subsequent reads will fail, unless we
-                    // somehow hold on to the header to reuse in next recv_from call.
                     return Err(Error::new(
                         ErrorKind::InvalidInput,
                         "message too big for buffer",

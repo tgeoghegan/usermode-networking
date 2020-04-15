@@ -12,6 +12,17 @@ implementations, as well as about writing portable Rust.
 Finally, this also serves as a body of code I can present to prospective employers since all the
 professional work I've ever done is closed source.
 
+## Running tests
+
+The integration tests I've rigged up here use real SOCK_RAW sockets. That means that failing tests
+can leave state behind in the kernel, that tests can't be run concurrently as they all share kernel
+state, and that tests must be run under `sudo` in order to get raw IP packets.
+
+This is obviously bad but for a hobby/educational project, I'm choosing not to
+go to the trouble of writing a mock socket. To run tests safely:
+
+	cargo test -- --test-threads 1
+
 ## `SOCK_RAW` on macOS
 
 The objective is to implement just UDP and TCP (OSI L4), and not any lower-level protocols like IP

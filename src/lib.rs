@@ -11,7 +11,6 @@ use std::mem;
 use std::net::AddrParseError;
 use std::os::unix::io::RawFd;
 
-pub mod ip;
 pub mod udp;
 
 #[repr(i32)]
